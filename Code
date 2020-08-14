@@ -1,0 +1,83 @@
+
+library(data.table)
+library(dplyr)
+library(stringr)
+library(readr)
+library(shiny)
+library(rsconnect)
+
+
+rsconnect::setAccountInfo(name='kyle-reynolds',
+                          token='EADBDAF8B499F196D2A1E639C651855C',
+                          secret='7BR4GQkICTbOVaazn1+RjOTuVOcDt4H4VHDkmkO6')
+
+files <- list.files(pattern = "data")
+temp <- lapply(files, fread,  sep=",")
+BOX_SCORE <- rbindlist( temp, use.names = FALSE)
+
+
+player_position <- read_csv("player_position.csv", col_types = cols())
+
+NBA_DEFENSE <- read_csv("NBA_DEFENSE _Sheet1.csv", col_types = cols())
+
+
+BOX_SCORE %>% 
+    mutate_all(~ifelse(. %in% c("N/A", "null", ""), NA, .)) %>% 
+    na.omit()
+
+BOX_SCORE <- BOX_SCORE %>%
+    rename(Name = PLAYER, MATCH_UP = 'MATCH UP')
+BOX_SCORE$MATCH_UP = str_sub(BOX_SCORE$MATCH_UP,-3)
+
+
+ui <- fluidPage(
+    
+    
+    titlePanel("NBA Player Stat Predicter"),
+    
+    
+    sidebarLayout(
+        sidebarPanel(
+            textInput("Name",label = "Player Name"),
+            selectInput("opponent", "Opponent:", 
+                        choices = c("ATL","BOS", "BKN", "CHI","CHA","CLE", "DAL", "DEN", "DET", "GSW", "HOU", "IND", "LAC",
+                                    "LAL", "MEM", "MIA", "MIL", "MIN", "NOP", "NYK", "OKC", "ORL", "PHX", "PHI", "POR", "SAC",
+                                    "SAS", "TOR", "UTA", "WAS"),
+                        selected = c("ATL","BOS", "BKN", "CHI","CHA","CLE", "DAL", "DEN", "DET", "GSW", "HOU", "IND", "LAC",
+                                     "LAL", "MEM", "MIA", "MIL", "MIN", "NOP", "NYK", "OKC", "ORL", "PHX", "PHI", "POR", "SAC",
+                                     "SAS", "TOR", "UTA", "WAS"),
+                        multiple = FALSE)
+        ),
+        
+        
+        mainPanel(
+            dataTableOutput("my_table")
+        )
+    )
+)
+
+server <- function(input, output) {
+    
+    output$my_table <- renderDataTable({
+        
+        plot_data <- BOX_SCORE %>% 
+            left_join(player_position, by =c("Name" = "Player")) %>%
+            left_join(NBA_DEFENSE, by = c("MATCH_UP" = "Team", "Pos" = "Position"))%>%
+            filter(Name %ilike% input$Name) %>%
+            filter(MATCH_UP %in% input$opponent) %>%
+            group_by(Name) %>%
+            summarise("PTS" = first(((.64*mean(PTS)) + (.36*DPTS))), "REB" = first(((.64*mean(REB)) + (.36*DREB.y))), 
+                      "AST" = first(((.64*mean(AST)) + (.36*DAST))), "BLK" = first(((.64*mean(BLK)) + (.36*DBLK))),
+                      "STL" = first(((.64*mean(STL)) + (.36*DSTL))), .groups = 'keep')
+        
+        
+        
+        plot_data
+        
+        
+    })
+    
+}
+
+
+shinyApp(ui = ui, server = server)

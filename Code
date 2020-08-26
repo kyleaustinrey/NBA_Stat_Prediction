@@ -1,10 +1,13 @@
-
 library(data.table)
 library(dplyr)
 library(stringr)
 library(readr)
 library(shiny)
 library(rsconnect)
+library(tidyr)
+library(ggplot2)
+library(scales)
+library(shinythemes)
 
 
 rsconnect::setAccountInfo(name='kyle-reynolds',
@@ -27,10 +30,16 @@ BOX_SCORE %>%
 
 BOX_SCORE <- BOX_SCORE %>%
     rename(Name = PLAYER, MATCH_UP = 'MATCH UP')
+
 BOX_SCORE$MATCH_UP = str_sub(BOX_SCORE$MATCH_UP,-3)
 
+BOX_SCORE <- BOX_SCORE %>%
+    mutate(Date_New = as.Date(DATE, format = "%m/%d/%Y"))
 
-ui <- fluidPage(
+player_position$Pos = str_sub(player_position$Pos,-2)
+NBA_DEFENSE <- NBA_DEFENSE[-c(50), ]
+
+ui <- fluidPage(theme = shinytheme("yeti"),
     
     
     titlePanel("NBA Player Stat Predicter"),
@@ -39,6 +48,7 @@ ui <- fluidPage(
     sidebarLayout(
         sidebarPanel(
             textInput("Name",label = "Player Name"),
+            helpText("Type in the player name you wish to research."),
             selectInput("opponent", "Opponent:", 
                         choices = c("ATL","BOS", "BKN", "CHI","CHA","CLE", "DAL", "DEN", "DET", "GSW", "HOU", "IND", "LAC",
                                     "LAL", "MEM", "MIA", "MIL", "MIN", "NOP", "NYK", "OKC", "ORL", "PHX", "PHI", "POR", "SAC",
@@ -46,15 +56,53 @@ ui <- fluidPage(
                         selected = c("ATL","BOS", "BKN", "CHI","CHA","CLE", "DAL", "DEN", "DET", "GSW", "HOU", "IND", "LAC",
                                      "LAL", "MEM", "MIA", "MIL", "MIN", "NOP", "NYK", "OKC", "ORL", "PHX", "PHI", "POR", "SAC",
                                      "SAS", "TOR", "UTA", "WAS"),
-                        multiple = FALSE)
+                        multiple = FALSE),
+            helpText("Click the opponent in the drop down menu.")
         ),
         
-        
         mainPanel(
-            dataTableOutput("my_table")
-        )
-    )
-)
+            tabsetPanel(type = "tabs",
+                        tabPanel("Stat Prediction", dataTableOutput("my_table"),
+                                 helpText("These are the predictive stats of the player",
+                                          "you searched based on his performance and the",
+                                          "opponents defense.")
+                                 ),
+                        
+                        tabPanel("Player Trends", plotOutput("player_trend"),
+                                 selectInput("Stat", "Stat:", 
+                                             choices = c("Points" = "PTS","Rebounds" = "REB",
+                                                         "Assists" = "AST", "Blocks" = "BLK",
+                                                         "Steals" = "STL"),
+                                             multiple = FALSE),
+                
+                                 helpText("Select the statistic of the player you searched."),
+                                 
+                                 dateRangeInput("dateRange", "Date Select", 
+                                                format = "yyyy-mm-dd", start= "2019-10-01", 
+                                                end= "2020-03-30"),
+                                 
+                                 helpText("You can change the date range for the player you searched.",
+                                          "Note: The trend is overall performance, not opponent specific.")),
+                        
+                        tabPanel("Points Scored", plotOutput("box_scores"),
+                                
+                                 helpText("This visual shows point total scored by an opponent vs the team you selected.",
+                                          "The red dot is the player you searched.")),
+                        tabPanel("Defensive Rankings", plotOutput("defense_ranking"),
+                                 selectInput("defensivestat", "Stat:", 
+                                             choices = c("Points" = "Points","Rebounds" = "Rebounds",
+                                                         "Assists" = "Assists", "Blocks" = "Blocks",
+                                                         "Steals" = "Steals"),
+                                             multiple = FALSE),
+                                 helpText("Shows defensive rankings based on worst to best. 
+                                          Top value gives up the most of selected stat.")),
+                        
+                        tabPanel("NBA Defense", plotOutput("defense"),
+                                
+                                 helpText("Here are defensive statistics for the opponent you selected."))
+                        
+            ))
+    ))
 
 server <- function(input, output) {
     
@@ -76,8 +124,80 @@ server <- function(input, output) {
         
         
     })
+    output$player_trend <- renderPlot({
+        y_axis <- input$Stat
+        
+        plot_data <- BOX_SCORE %>% 
+            mutate(as.Date(DATE, format = "%m/%d/%Y"))
+        
+        plot_data <- plot_data %>% 
+            filter(Date_New >= input$dateRange[1]  & Date_New <= input$dateRange[2]) %>%
+            filter(Name %ilike% input$Name)
+        
+        
+        ggplot(plot_data, aes_string(x= "Date_New", y= y_axis, color = y_axis)) +
+            geom_point(shape= 18, size = 4)+
+            geom_smooth() +
+            labs(title = "NBA Player Trend This Season",
+                 x = "Date") 
+        
+    })
+    output$box_scores <- renderPlot({
+        
+        plot_data <- BOX_SCORE %>%
+            filter(MATCH_UP %in% input$opponent)
+        highlight <- plot_data %>%
+            filter(Name %ilike% input$Name)
+        
+        
+        ggplot(plot_data, aes_string(x= "Date_New", y= "PTS")) +
+            geom_point(alpha = 1/3) +
+            geom_point(data = highlight, aes(color = "red", size = 3, show.legend = FALSE))+
+            scale_x_date(date_breaks = "1 month", 
+                         limits = as.Date(c('2019-10-15','2020-03-15')))+
+            labs(title = "Points vs Opponent",
+                 subtitle = "Compared to Rest of League",
+                 x = "Date",
+                 y = "Points Scored")+
+            theme(legend.position = "none")
+        
+    })
     
-}
-
-
+    output$defense_ranking <- renderPlot({
+        
+        plot_data<- NBA_DEFENSE %>%
+            group_by(Team) %>%
+            summarise(Points = sum(DPTS), Rebounds = sum(DREB), Assists = sum(DAST), 
+                      Blocks = sum(DBLK), Steals = sum(DSTL), .groups = 'keep') 
+        plot_data <- plot_data %>%
+            gather(statistic, amount, Points:Steals, factor_key=TRUE)
+        plot_data_1 <- plot_data %>%
+            filter(statistic == input$defensivestat) 
+        
+        ggplot(plot_data_1, aes(x= reorder(Team, desc(-amount)), y=amount, label=amount, fill = amount)) + 
+            geom_bar(stat='identity', size=8, show.legend = FALSE)  +
+            geom_text(color="white", size=4, nudge_y = -4) +
+            labs(title="Defensive Stat Rankings", 
+                 subtitle="Worst to Best",
+                 x = "Statistic Amount",
+                 y = "Team") + 
+            coord_flip()
+    })
+    
+    
+    output$defense <- renderPlot({
+        
+        plot_data <- gather(NBA_DEFENSE, Statistic, Amount, DPTS:DSTL, factor_key=TRUE)
+        plot_data_1 <- plot_data %>%
+            filter(Team %in% input$opponent)
+        
+        ggplot(plot_data_1, aes(x= Statistic, y= Amount, fill = Position)) +
+            geom_bar(position="dodge", stat="identity") +
+            labs(title = "NBA Defense Vs Position",
+                 x = "Statistic",
+                 y = "Total") 
+    })
+}   
 shinyApp(ui = ui, server = server)
+
+

@@ -10,10 +10,6 @@ library(scales)
 library(shinythemes)
 
 
-rsconnect::setAccountInfo(name='kyle-reynolds',
-                          token='EADBDAF8B499F196D2A1E639C651855C',
-                          secret='7BR4GQkICTbOVaazn1+RjOTuVOcDt4H4VHDkmkO6')
-
 files <- list.files(pattern = "data")
 temp <- lapply(files, fread,  sep=",")
 BOX_SCORE <- rbindlist( temp, use.names = FALSE)
